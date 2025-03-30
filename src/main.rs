@@ -107,6 +107,8 @@ fn combine(colormap:&RgbImage, hillshade:&RgbImage) -> RgbImage {
     let (width, height) = colormap.dimensions();
     let mut my_special_blend = RgbImage::new(width, height);
 
+    // blend 2 imgs like: shaded_pixel = color_pixel * (hillshade_pixel / 255.0)
+
     for y in 0..height {
         for x in 0..width {
             let color = colormap.get_pixel(x, y);
