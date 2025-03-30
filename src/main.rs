@@ -1,4 +1,5 @@
 use image::{open, RgbImage, Rgb, GrayImage, Luma};
+use std::f32::consts::PI;
 
 fn main() {
     let img = open("output.png").expect("Failed to open image");
@@ -13,6 +14,10 @@ fn main() {
     let hillshade = apply_hillshade(&dem, 30.0, 315.0, 45.0); // 30m cell size, NW light, 45° sun
     hillshade.save("hillshade.png").expect("Failed to save hillshade image");
 
+}
+
+fn deg2rad(deg : f32)-> f32 {
+    deg * (PI / 180.0)
 }
 
 fn grayscale_to_colormap(gray: &GrayImage) -> RgbImage {
@@ -34,40 +39,63 @@ fn grayscale_to_colormap(gray: &GrayImage) -> RgbImage {
 }
 
 fn apply_hillshade(
-    elevation: &GrayImage,
-    cell_size: f64,         // Distance between pixels (e.g., meters)
-    azimuth_deg: f64,       // Direction of light source (e.g., 315 = NW)
-    altitude_deg: f64,      // Altitude of sun above horizon (e.g., 45)
+    gray: &GrayImage,
+    cell_size: f32,         // Distance between pixels 
+    azimuth_deg: f32,       // Direction of light source 315)
+    altitude_deg: f32,      // Altitude of sun above horizon (45)
 ) -> RgbImage {
-    let (width, height) = elevation.dimensions();
-    let mut shaded = RgbImage::new(width, height);
+    let (width, height) = gray.dimensions();
+    let mut rgb_img = RgbImage::new(width, height);
 
-    let azimuth_rad = (360.0 - azimuth_deg + 90.0).to_radians();
-    let altitude_rad = altitude_deg.to_radians();
+    let az_rad = deg2rad(360.0 - azimuth_deg + 90.0) % (2.0 * PI); // convert to math azimuth
+    let alt_rad = deg2rad(altitude_deg);
 
-    for y in 1..height - 1 {
-        for x in 1..width - 1 {
-            let z = |dx: i32, dy: i32| {
-                let px = (x as i32 + dx) as u32;
-                let py = (y as i32 + dy) as u32;
-                elevation.get_pixel(px, py)[0] as f64
+    let get = |x: i32, y: i32| -> f32 {
+        let cx = x.clamp(0, width as i32 - 1) as u32;
+        let cy = y.clamp(0, height as i32 - 1) as u32;
+        gray.get_pixel(cx, cy)[0] as f32
+    };
+
+    for y in 0..height as i32 {
+        for x in 0..width as i32 {
+            // Get elevation from 3x3 neighborhood
+            let z1 = get(x - 1, y - 1);
+            let z2 = get(x,     y - 1);
+            let z3 = get(x + 1, y - 1);
+            let z4 = get(x - 1, y);
+            let z5 = get(x + 1, y);
+            let z6 = get(x - 1, y + 1);
+            let z7 = get(x,     y + 1);
+            let z8 = get(x + 1, y + 1);
+
+            // Horn's method for dz/dx and dz/dy
+            let dzdx = ((z3 + 2.0 * z5 + z8) - (z1 + 2.0 * z4 + z6)) / (8.0 * cell_size);
+            let dzdy = ((z6 + 2.0 * z7 + z8) - (z1 + 2.0 * z2 + z3)) / (8.0 * cell_size);
+
+            let slope = (dzdx * dzdx + dzdy * dzdy).sqrt().atan();
+            let aspect = if dzdx != 0.0 {
+                let mut aspect = (dzdy / -dzdx).atan();
+                if dzdx > 0.0 {
+                    aspect += PI;
+                } else if dzdy < 0.0 {
+                    aspect += 2.0 * PI;
+                }
+                aspect
+            } else if dzdy > 0.0 {
+                PI / 2.0
+            } else {
+                3.0 * PI / 2.0
             };
 
-            let dz_dx = ((z(1, -1) + 2.0 * z(1, 0) + z(1, 1)) - (z(-1, -1) + 2.0 * z(-1, 0) + z(-1, 1))) / (8.0 * cell_size);
-            let dz_dy = ((z(-1, 1) + 2.0 * z(0, 1) + z(1, 1)) - (z(-1, -1) + 2.0 * z(0, -1) + z(1, -1))) / (8.0 * cell_size);
+            let hs = (alt_rad.cos() * slope.cos()
+                + alt_rad.sin() * slope.sin() * (az_rad - aspect).cos()).max(0.0);
 
-            let slope_rad = (dz_dx * dz_dx + dz_dy * dz_dy).sqrt().atan();
-            let aspect_rad = dz_dy.atan2(-dz_dx);
+            let shade = (255.0 * hs).round() as u8;
 
-            let shaded_val = 255.0 * (
-                altitude_rad.sin() * slope_rad.sin() +
-                altitude_rad.cos() * slope_rad.cos() * (azimuth_rad - aspect_rad).cos()
-            );
-
-            let intensity = shaded_val.max(0.0).min(255.0) as u8;
-            shaded.put_pixel(x, y, Rgb([intensity, intensity, intensity]));
+            // Optional: apply to grayscale colormap or RGB
+            rgb_img.put_pixel(x as u32, y as u32, Rgb([shade, shade, shade]));
         }
     }
 
-    shaded
+    rgb_img
 }
