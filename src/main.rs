@@ -1,4 +1,4 @@
-use image::{open, RgbImage, Rgb, GrayImage, Luma};
+use image::{open, RgbImage, Rgb, GrayImage};
 use std::f32::consts::PI;
 
 fn main() {
@@ -14,6 +14,9 @@ fn main() {
     let hillshade = apply_hillshade(&dem, 30.0, 315.0, 45.0); // 30m cell size, NW light, 45° sun
     hillshade.save("hillshade.png").expect("Failed to save hillshade image");
 
+    // blend
+    let blended = combine(&color_img, &hillshade);
+    blended.save("blended.png").expect("Failed to save blended image");
 }
 
 fn deg2rad(deg : f32)-> f32 {
@@ -98,4 +101,24 @@ fn apply_hillshade(
     }
 
     rgb_img
+}
+
+fn combine(colormap:&RgbImage, hillshade:&RgbImage) -> RgbImage {
+    let (width, height) = colormap.dimensions();
+    let mut my_special_blend = RgbImage::new(width, height);
+
+    for y in 0..height {
+        for x in 0..width {
+            let color = colormap.get_pixel(x, y);
+            let shade = hillshade.get_pixel(x, y)[0] as f32 / 255.0;
+
+            let r = (color[0] as f32 * shade).clamp(0.0, 255.0) as u8;
+            let g = (color[1] as f32 * shade).clamp(0.0, 255.0) as u8;
+            let b = (color[2] as f32 * shade).clamp(0.0, 255.0) as u8;
+
+            my_special_blend.put_pixel(x, y, Rgb([r, g, b]));
+        }
+    }
+
+    my_special_blend
 }
